@@ -23,32 +23,38 @@ export function DownloadButton({ track, onStatusChange }: Props) {
         try {
             await downloadTrack(
                 track.id,
+                track.title,   
                 TracksApi.getStreamUrl(track.id),
                 track.fileExtension,
                 API_KEY,
-                setProgress
+                setProgress,
             );
             setDownloaded(true);
             onStatusChange?.(true);
-        } catch (e) {
-            Alert.alert('Ошибка', 'Не удалось скачать трек');
+        } catch (e: any) {
+            Alert.alert('Ошибка', e?.message ?? 'Не удалось скачать трек');
         } finally {
             setDownloading(false);
         }
     };
 
     const handleDelete = () => {
-        Alert.alert('Удалить локальную копию?', 'Трек останется на сервере, но будет стримиться.', [
-            { text: 'Отмена', style: 'cancel' },
-            {
-                text: 'Удалить', style: 'destructive',
-                onPress: async () => {
-                    await deleteLocalTrack(track.id);
-                    setDownloaded(false);
-                    onStatusChange?.(false);
-                }
-            }
-        ]);
+        Alert.alert(
+            'Удалить локальную копию?',
+            'Трек будет удалён из медиатеки устройства, но останется на сервере.',
+            [
+                { text: 'Отмена', style: 'cancel' },
+                {
+                    text: 'Удалить',
+                    style: 'destructive',
+                    onPress: async () => {
+                        await deleteLocalTrack(track.id);
+                        setDownloaded(false);
+                        onStatusChange?.(false);
+                    },
+                },
+            ],
+        );
     };
 
     if (downloading) {

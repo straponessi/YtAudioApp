@@ -26,6 +26,13 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      ["expo-media-library", {
+        "photosPermission": "Разрешить YtAudio сохранять треки в медиатеку.",
+        "savePhotosPermission": "Разрешить YtAudio сохранять треки.",
+        "isAccessMediaLocationEnabled": true
+      }]
+    ]
   }
 }

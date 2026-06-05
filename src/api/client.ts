@@ -1,7 +1,7 @@
 ﻿import axios from 'axios';
 
-export const BASE_URL = 'http://YOURURL:5000';
-export const API_KEY = 'YOUR_API_KEY_HERE';
+export const BASE_URL = 'http://localhost:5000';
+export const API_KEY = 'YOUR_API_KEY';
 
 export const api = axios.create({
     baseURL: BASE_URL,
@@ -17,6 +17,7 @@ export interface Track {
     youtubeId: string;
     title: string;
     artist: string | null;
+    album: string | null;     
     thumbnailUrl: string | null;
     durationSeconds: number;
     fileExtension: string;
@@ -38,9 +39,14 @@ export const TracksApi = {
     getAll: (search?: string, sortBy?: string) =>
         api.get<Track[]>('/api/tracks', { params: { search, sortBy } }),
 
-    // Ключ в заголовке через axios — для списка треков
-    // Для стриминга через expo-av — ключ передаётся напрямую в headers объекте
-    getStreamUrl: (id: string) => `${BASE_URL}/api/tracks/${id}/stream`,
+    getStreamUrl: (id: string) =>
+        `${BASE_URL}/api/tracks/${id}/stream`,
+
+    getDownloadUrl: (id: string) =>
+        `${BASE_URL}/api/tracks/${id}/download?apiKey=${encodeURIComponent(API_KEY)}`,
+
+    patch: (id: string, data: { title?: string; artist?: string; album?: string }) =>
+        api.patch<Track>(`/api/tracks/${id}`, data),
 
     delete: (id: string) => api.delete(`/api/tracks/${id}`),
 };
