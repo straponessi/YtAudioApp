@@ -43,4 +43,4 @@ config.*
 /ios
 /android
 
-src/config.ts
+config.ts

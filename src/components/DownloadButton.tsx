@@ -1,7 +1,7 @@
 ﻿import React, { useState, useEffect } from 'react';
 import { TouchableOpacity, Text, StyleSheet, ActivityIndicator, Alert } from 'react-native';
-import { Track, TracksApi, API_KEY } from '../api/client';
-import { isDownloaded, downloadTrack, deleteLocalTrack } from '../services/LocalStorageService';
+import { Track, TracksApi } from '../api/client';
+import { isDownloaded, downloadTrack, removeDownload } from '../services/LocalStorageService';
 
 interface Props {
     track: Track;
@@ -22,11 +22,8 @@ export function DownloadButton({ track, onStatusChange }: Props) {
         setProgress(0);
         try {
             await downloadTrack(
-                track.id,
-                track.title,   
-                TracksApi.getStreamUrl(track.id),
-                track.fileExtension,
-                API_KEY,
+                { id: track.id, title: track.title, fileExtension: track.fileExtension },
+                TracksApi.getDownloadUrl(track.id),  
                 setProgress,
             );
             setDownloaded(true);
@@ -48,7 +45,7 @@ export function DownloadButton({ track, onStatusChange }: Props) {
                     text: 'Удалить',
                     style: 'destructive',
                     onPress: async () => {
-                        await deleteLocalTrack(track.id);
+                        await removeDownload(track.id); 
                         setDownloaded(false);
                         onStatusChange?.(false);
                     },
@@ -83,13 +80,9 @@ export function DownloadButton({ track, onStatusChange }: Props) {
 
 const styles = StyleSheet.create({
     btn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 16,
-        backgroundColor: '#1a1a2e',
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        paddingHorizontal: 12, paddingVertical: 6,
+        borderRadius: 16, backgroundColor: '#1a1a2e',
     },
     btnText: { color: '#6c63ff', fontSize: 13, fontWeight: '600' },
     downloaded: { backgroundColor: '#1a2e1a' },

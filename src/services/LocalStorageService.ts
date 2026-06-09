@@ -3,8 +3,23 @@ import * as MediaLibrary from 'expo-media-library';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-const DOWNLOAD_METADATA_KEY = 'downloaded_tracks';
-const TEMP_DIR = FileSystem.cacheDirectory + 'ytaudio-temp/';
+const TRACK_LIST_KEY    = 'track_list_cache';   
+const DEVICE_DL_KEY     = 'downloaded_tracks';  
+const TEMP_DIR          = FileSystem.cacheDirectory + 'ytaudio-temp/';
+
+
+interface CachedTrack {
+    id: string;
+    youtubeId: string;
+    title: string;
+    artist: string | null;
+    album: string | null;
+    thumbnailUrl: string | null;
+    durationSeconds: number;
+    fileExtension: string;
+    fileSizeBytes: number;
+    createdAt: string;
+}
 
 interface DownloadEntry {
     trackId: string;
@@ -13,22 +28,38 @@ interface DownloadEntry {
     downloadedAt: number;
 }
 
-async function getDownloadRegistry(): Promise<DownloadEntry[]> {
+
+export async function saveTrackList(tracks: CachedTrack[]): Promise<void> {
+    await AsyncStorage.setItem(TRACK_LIST_KEY, JSON.stringify(tracks));
+}
+
+export async function getTrackList(): Promise<CachedTrack[]> {
     try {
-        const raw = await AsyncStorage.getItem(DOWNLOAD_METADATA_KEY);
+        const raw = await AsyncStorage.getItem(TRACK_LIST_KEY);
         return raw ? JSON.parse(raw) : [];
     } catch {
         return [];
     }
 }
 
-async function saveDownloadRegistry(entries: DownloadEntry[]): Promise<void> {
-    await AsyncStorage.setItem(DOWNLOAD_METADATA_KEY, JSON.stringify(entries));
+
+async function _getRegistry(): Promise<DownloadEntry[]> {
+    try {
+        const raw = await AsyncStorage.getItem(DEVICE_DL_KEY);
+        return raw ? JSON.parse(raw) : [];
+    } catch {
+        return [];
+    }
+}
+
+async function _saveRegistry(entries: DownloadEntry[]): Promise<void> {
+    await AsyncStorage.setItem(DEVICE_DL_KEY, JSON.stringify(entries));
 }
 
 export async function downloadTrack(
     track: { id: string; title: string; fileExtension: string },
-    downloadUrl: string
+    downloadUrl: string,
+    onProgress?: (progress: number) => void,
 ): Promise<void> {
     const { status } = await MediaLibrary.requestPermissionsAsync(false);
     if (status !== 'granted') {
@@ -37,20 +68,24 @@ export async function downloadTrack(
 
     await FileSystem.makeDirectoryAsync(TEMP_DIR, { intermediates: true });
 
-    const safeTitle = track.title.replace(/[^\w\s-]/g, '').trim() || 'track';
-    const filename = `${safeTitle}.${track.fileExtension}`;
-    const tempPath = TEMP_DIR + filename;
+    const safeTitle = track.title.replace(/[/\\?%*:|"<>]/g, '_').trim() || 'track';
+    const filename  = `${safeTitle}.${track.fileExtension}`;
+    const tempPath  = TEMP_DIR + filename;
 
-    const downloadResumable = FileSystem.createDownloadResumable(
+    const dl = FileSystem.createDownloadResumable(
         downloadUrl,
-        tempPath
+        tempPath,
+        {},
+        ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
+            if (totalBytesExpectedToWrite > 0)
+                onProgress?.(totalBytesWritten / totalBytesExpectedToWrite);
+        },
     );
 
-    const result = await downloadResumable.downloadAsync();
+    const result = await dl.downloadAsync();
     if (!result?.uri) throw new Error('Загрузка не удалась');
 
     const asset = await MediaLibrary.createAssetAsync(result.uri);
-
     await FileSystem.deleteAsync(result.uri, { idempotent: true });
 
     if (Platform.OS === 'android') {
@@ -65,21 +100,15 @@ export async function downloadTrack(
         }
     }
 
-    const registry = await getDownloadRegistry();
+    const registry = await _getRegistry();
     const filtered = registry.filter(e => e.trackId !== track.id);
-    filtered.push({
-        trackId: track.id,
-        assetId: asset.id,
-        filename,
-        downloadedAt: Date.now(),
-    });
-    await saveDownloadRegistry(filtered);
+    filtered.push({ trackId: track.id, assetId: asset.id, filename, downloadedAt: Date.now() });
+    await _saveRegistry(filtered);
 }
 
 export async function isDownloaded(trackId: string): Promise<boolean> {
     try {
-        const registry = await getDownloadRegistry();
-        const entry = registry.find(e => e.trackId === trackId);
+        const entry = (await _getRegistry()).find(e => e.trackId === trackId);
         if (!entry) return false;
         const info = await MediaLibrary.getAssetInfoAsync(entry.assetId);
         return !!info;
@@ -90,26 +119,19 @@ export async function isDownloaded(trackId: string): Promise<boolean> {
 
 export async function getLocalPath(trackId: string): Promise<string | null> {
     try {
-        const registry = await getDownloadRegistry();
-        const entry = registry.find(e => e.trackId === trackId);
+        const entry = (await _getRegistry()).find(e => e.trackId === trackId);
         if (!entry) return null;
-        const assetInfo = await MediaLibrary.getAssetInfoAsync(entry.assetId);
-        return assetInfo?.localUri ?? null;
+        const info = await MediaLibrary.getAssetInfoAsync(entry.assetId);
+        return info?.localUri ?? null;
     } catch {
         return null;
     }
 }
 
 export async function removeDownload(trackId: string): Promise<void> {
-    const registry = await getDownloadRegistry();
+    const registry = await _getRegistry();
     const entry = registry.find(e => e.trackId === trackId);
     if (!entry) return;
-
-    try {
-        await MediaLibrary.deleteAssetsAsync([entry.assetId]);
-    } catch {
-    }
-
-    const updated = registry.filter(e => e.trackId !== trackId);
-    await saveDownloadRegistry(updated);
+    try { await MediaLibrary.deleteAssetsAsync([entry.assetId]); } catch {}
+    await _saveRegistry(registry.filter(e => e.trackId !== trackId));
 }

@@ -7,7 +7,7 @@ import { Track, TracksApi } from '../api/client';
 import { usePlayer } from '../context/PlayerContext';
 import { MiniPlayer } from '../components/MiniPlayer';
 import { EditTrackModal } from '../components/EditTrackModal';
-import { cacheTrackList, getCachedTrackList } from '../services/LocalStorageService';
+import { saveTrackList, getTrackList } from '../services/LocalStorageService';
 
 type SortBy = 'title' | 'artist' | 'date' | 'size';
 
@@ -30,7 +30,7 @@ export function LibraryScreen({ onOpenPlayer, onOpenAdd }: Props) {
 
         if (!isRefresh) {
             try {
-                const cached = await getCachedTrackList();
+                const cached = await getTrackList();
                 if (cached.length > 0) {
                     setTracks(cached);
                     setLoading(false);
@@ -42,10 +42,10 @@ export function LibraryScreen({ onOpenPlayer, onOpenAdd }: Props) {
         try {
             const res = await TracksApi.getAll(search || undefined, sortBy);
             setTracks(res.data);
-            await cacheTrackList(res.data).catch(() => {});
+            await saveTrackList(res.data).catch(() => {});
         } catch {
             try {
-                const cached = await getCachedTrackList();
+                const cached = await getTrackList();
                 if (cached.length === 0) {
                     Alert.alert('Нет подключения', 'Не удалось загрузить треки и кеш пуст.');
                 }

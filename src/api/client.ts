@@ -1,13 +1,12 @@
-﻿import axios from 'axios'
-import { Config } from '../config'; 
+﻿import axios from 'axios';
+import { Config } from '../config';
 
 export const BASE_URL = Config.BASE_URL;
+export const API_KEY  = Config.API_KEY;  
 
 export const apiClient = axios.create({
     baseURL: BASE_URL,
-    headers: {
-        'X-Api-Key': Config.API_KEY,
-    },
+    headers: { 'X-Api-Key': API_KEY },
     timeout: 30_000,
 });
 
@@ -16,7 +15,7 @@ export interface Track {
     youtubeId: string;
     title: string;
     artist: string | null;
-    album: string | null;     
+    album: string | null;
     thumbnailUrl: string | null;
     durationSeconds: number;
     fileExtension: string;
@@ -42,7 +41,7 @@ export const TracksApi = {
         `${BASE_URL}/api/tracks/${id}/stream`,
 
     getDownloadUrl: (id: string) =>
-        `${BASE_URL}/api/tracks/${id}/download?apiKey=${encodeURIComponent(Config.API_KEY)}`,
+        `${BASE_URL}/api/tracks/${id}/download?apiKey=${encodeURIComponent(API_KEY)}`,
 
     patch: (id: string, data: { title?: string; artist?: string; album?: string }) =>
         apiClient.patch<Track>(`/api/tracks/${id}`, data),
