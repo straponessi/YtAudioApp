@@ -1,15 +1,14 @@
-﻿import axios from 'axios';
+﻿import axios from 'axios'
+import { Config } from '../config'; 
 
-export const BASE_URL = 'http://YOURURL:5000';
-export const API_KEY = 'YOUR_API_KEY_HERE';
+export const BASE_URL = Config.BASE_URL;
 
-export const api = axios.create({
+export const apiClient = axios.create({
     baseURL: BASE_URL,
     headers: {
-        'X-Api-Key': API_KEY,
-        'Content-Type': 'application/json',
+        'X-Api-Key': Config.API_KEY,
     },
-    timeout: 30000,
+    timeout: 30_000,
 });
 
 export interface Track {
@@ -17,6 +16,7 @@ export interface Track {
     youtubeId: string;
     title: string;
     artist: string | null;
+    album: string | null;     
     thumbnailUrl: string | null;
     durationSeconds: number;
     fileExtension: string;
@@ -36,19 +36,24 @@ export interface DownloadTask {
 
 export const TracksApi = {
     getAll: (search?: string, sortBy?: string) =>
-        api.get<Track[]>('/api/tracks', { params: { search, sortBy } }),
+        apiClient.get<Track[]>('/api/tracks', { params: { search, sortBy } }),
 
-    // Ключ в заголовке через axios — для списка треков
-    // Для стриминга через expo-av — ключ передаётся напрямую в headers объекте
-    getStreamUrl: (id: string) => `${BASE_URL}/api/tracks/${id}/stream`,
+    getStreamUrl: (id: string) =>
+        `${BASE_URL}/api/tracks/${id}/stream`,
 
-    delete: (id: string) => api.delete(`/api/tracks/${id}`),
+    getDownloadUrl: (id: string) =>
+        `${BASE_URL}/api/tracks/${id}/download?apiKey=${encodeURIComponent(Config.API_KEY)}`,
+
+    patch: (id: string, data: { title?: string; artist?: string; album?: string }) =>
+        apiClient.patch<Track>(`/api/tracks/${id}`, data),
+
+    delete: (id: string) => apiClient.delete(`/api/tracks/${id}`),
 };
 
 export const DownloadsApi = {
     submit: (url: string) =>
-        api.post<DownloadTask>('/api/downloads', { url }),
+        apiClient.post<DownloadTask>('/api/downloads', { url }),
 
     getStatus: (taskId: string) =>
-        api.get<DownloadTask>(`/api/downloads/${taskId}`),
+        apiClient.get<DownloadTask>(`/api/downloads/${taskId}`),
 };

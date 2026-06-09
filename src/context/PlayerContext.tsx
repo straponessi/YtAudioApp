@@ -23,6 +23,8 @@ const PlayerContext = createContext<PlayerContextValue | null>(null);
 
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const soundRef = useRef<Audio.Sound | null>(null);
+    const playIdRef = useRef(0); // инкрементируется при каждом вызове play()
+
     const [state, setState] = useState<PlayerState>({
         currentTrack: null,
         isPlaying: false,
@@ -40,7 +42,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     };
 
     const play = useCallback(async (track: Track) => {
+        const myId = ++playIdRef.current;
+
         setState(s => ({ ...s, isLoading: true, currentTrack: track }));
+
         await unloadCurrent();
 
         await Audio.setAudioModeAsync({
@@ -49,21 +54,22 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         });
 
         const localPath = await getLocalPath(track.id);
-        const isLocal = !!localPath;
 
+        // Пока мы ждали — мог прийти новый вызов play(). Выходим.
+        if (myId !== playIdRef.current) return;
+
+        const isLocal = !!localPath;
         const uri = isLocal ? localPath! : TracksApi.getStreamUrl(track.id);
-        const headers = isLocal ? undefined : { 'X-Api-Key': API_KEY };
 
         const { sound } = await Audio.Sound.createAsync(
             {
                 uri,
                 headers: isLocal ? undefined : { 'X-Api-Key': API_KEY },
-                overrideFileExtensionAndroid: 'opus'
+                overrideFileExtensionAndroid: 'opus',
             },
             { shouldPlay: true },
             (status) => {
                 if (!status.isLoaded) return;
-                console.log('position:', status.positionMillis, 'duration:', status.durationMillis);
                 setState(s => ({
                     ...s,
                     isPlaying: status.isPlaying,
@@ -73,6 +79,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
                 }));
             }
         );
+
+        if (myId !== playIdRef.current) {
+            await sound.unloadAsync();
+            return;
+        }
 
         soundRef.current = sound;
         setState(s => ({ ...s, isLoading: false, isPlaying: true, isLocal }));
@@ -93,8 +104,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     }, []);
 
     const stop = useCallback(async () => {
+        playIdRef.current++; 
         await unloadCurrent();
-        setState({ currentTrack: null, isPlaying: false, isLoading: false, isLocal: false, position: 0, duration: 0 });
+        setState({
+            currentTrack: null,
+            isPlaying: false,
+            isLoading: false,
+            isLocal: false,
+            position: 0,
+            duration: 0,
+        });
     }, []);
 
     return (

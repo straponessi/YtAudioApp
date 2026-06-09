@@ -1,122 +1,115 @@
 ﻿import * as FileSystem from 'expo-file-system/legacy';
+import * as MediaLibrary from 'expo-media-library';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 
-const TRACKS_DIR = (FileSystem as any).documentDirectory
-    ? `${(FileSystem as any).documentDirectory}tracks/`
-    : `${(FileSystem as any).cacheDirectory}tracks/`;
+const DOWNLOAD_METADATA_KEY = 'downloaded_tracks';
+const TEMP_DIR = FileSystem.cacheDirectory + 'ytaudio-temp/';
 
-const STORAGE_KEY = 'downloaded_tracks';
-
-export interface LocalTrack {
+interface DownloadEntry {
     trackId: string;
-    localPath: string;
-    downloadedAt: string;
+    assetId: string;
+    filename: string;
+    downloadedAt: number;
 }
 
-const TRACKS_CACHE_KEY = 'tracks_cache';
-
-export async function cacheTrackList(tracks: any[]): Promise<void> {
-    await AsyncStorage.setItem(TRACKS_CACHE_KEY, JSON.stringify(tracks));
-}
-
-export async function getCachedTrackList(): Promise<any[]> {
-    const raw = await AsyncStorage.getItem(TRACKS_CACHE_KEY);
-    return raw ? JSON.parse(raw) : [];
-}
-
-// Убедиться что папка существует
-async function ensureDir() {
-    const dir = await FileSystem.getInfoAsync(TRACKS_DIR);
-    if (!dir.exists) {
-        await FileSystem.makeDirectoryAsync(TRACKS_DIR, { intermediates: true });
+async function getDownloadRegistry(): Promise<DownloadEntry[]> {
+    try {
+        const raw = await AsyncStorage.getItem(DOWNLOAD_METADATA_KEY);
+        return raw ? JSON.parse(raw) : [];
+    } catch {
+        return [];
     }
 }
 
-// Получить все скачанные треки
-export async function getLocalTracks(): Promise<LocalTrack[]> {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+async function saveDownloadRegistry(entries: DownloadEntry[]): Promise<void> {
+    await AsyncStorage.setItem(DOWNLOAD_METADATA_KEY, JSON.stringify(entries));
 }
 
-// Проверить скачан ли трек
-export async function isDownloaded(trackId: string): Promise<boolean> {
-    const tracks = await getLocalTracks();
-    const entry = tracks.find(t => t.trackId === trackId);
-    if (!entry) return false;
-
-    // Проверить что файл реально существует на диске
-    const info = await FileSystem.getInfoAsync(entry.localPath);
-    return info.exists;
-}
-
-// Получить локальный путь если скачан
-export async function getLocalPath(trackId: string): Promise<string | null> {
-    const tracks = await getLocalTracks();
-    const entry = tracks.find(t => t.trackId === trackId);
-    if (!entry) return null;
-
-    const info = await FileSystem.getInfoAsync(entry.localPath);
-    return info.exists ? entry.localPath : null;
-}
-
-// Скачать трек на устройство
 export async function downloadTrack(
-    trackId: string,
-    streamUrl: string,
-    fileExtension: string,
-    apiKey: string,
-    onProgress?: (progress: number) => void
-): Promise<string> {
-    await ensureDir();
+    track: { id: string; title: string; fileExtension: string },
+    downloadUrl: string
+): Promise<void> {
+    const { status } = await MediaLibrary.requestPermissionsAsync(false);
+    if (status !== 'granted') {
+        throw new Error('Нет разрешения на доступ к медиатеке устройства');
+    }
 
-    const localPath = `${TRACKS_DIR}${trackId}.${fileExtension}`;
+    await FileSystem.makeDirectoryAsync(TEMP_DIR, { intermediates: true });
+
+    const safeTitle = track.title.replace(/[^\w\s-]/g, '').trim() || 'track';
+    const filename = `${safeTitle}.${track.fileExtension}`;
+    const tempPath = TEMP_DIR + filename;
 
     const downloadResumable = FileSystem.createDownloadResumable(
-        streamUrl,
-        localPath,
-        { headers: { 'X-Api-Key': apiKey } },
-        (downloadProgress) => {
-            const progress =
-                downloadProgress.totalBytesWritten /
-                downloadProgress.totalBytesExpectedToWrite;
-            onProgress?.(progress);
-        }
+        downloadUrl,
+        tempPath
     );
 
     const result = await downloadResumable.downloadAsync();
-    if (!result?.uri) throw new Error('Download failed');
+    if (!result?.uri) throw new Error('Загрузка не удалась');
 
-    // Сохранить запись в AsyncStorage
-    const tracks = await getLocalTracks();
-    const filtered = tracks.filter(t => t.trackId !== trackId); // убрать если был
-    filtered.push({ trackId, localPath: result.uri, downloadedAt: new Date().toISOString() });
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+    const asset = await MediaLibrary.createAssetAsync(result.uri);
 
-    return result.uri;
-}
+    await FileSystem.deleteAsync(result.uri, { idempotent: true });
 
-// Удалить локальный файл
-export async function deleteLocalTrack(trackId: string): Promise<void> {
-    const localPath = await getLocalPath(trackId);
-    if (localPath) {
-        await FileSystem.deleteAsync(localPath, { idempotent: true });
-    }
-
-    const tracks = await getLocalTracks();
-    const filtered = tracks.filter(t => t.trackId !== trackId);
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
-}
-
-// Размер всех скачанных файлов
-export async function getStorageUsed(): Promise<number> {
-    const tracks = await getLocalTracks();
-    let total = 0;
-    for (const t of tracks) {
-        const info = await FileSystem.getInfoAsync(t.localPath);
-        if (info.exists) {
-            // @ts-ignore — size есть в рантайме но не в типах этой версии
-            total += (info as any).size ?? 0;
+    if (Platform.OS === 'android') {
+        try {
+            const album = await MediaLibrary.getAlbumAsync('YtAudio');
+            if (album) {
+                await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+            } else {
+                await MediaLibrary.createAlbumAsync('YtAudio', asset, false);
+            }
+        } catch {
         }
     }
-    return total;
+
+    const registry = await getDownloadRegistry();
+    const filtered = registry.filter(e => e.trackId !== track.id);
+    filtered.push({
+        trackId: track.id,
+        assetId: asset.id,
+        filename,
+        downloadedAt: Date.now(),
+    });
+    await saveDownloadRegistry(filtered);
+}
+
+export async function isDownloaded(trackId: string): Promise<boolean> {
+    try {
+        const registry = await getDownloadRegistry();
+        const entry = registry.find(e => e.trackId === trackId);
+        if (!entry) return false;
+        const info = await MediaLibrary.getAssetInfoAsync(entry.assetId);
+        return !!info;
+    } catch {
+        return false;
+    }
+}
+
+export async function getLocalPath(trackId: string): Promise<string | null> {
+    try {
+        const registry = await getDownloadRegistry();
+        const entry = registry.find(e => e.trackId === trackId);
+        if (!entry) return null;
+        const assetInfo = await MediaLibrary.getAssetInfoAsync(entry.assetId);
+        return assetInfo?.localUri ?? null;
+    } catch {
+        return null;
+    }
+}
+
+export async function removeDownload(trackId: string): Promise<void> {
+    const registry = await getDownloadRegistry();
+    const entry = registry.find(e => e.trackId === trackId);
+    if (!entry) return;
+
+    try {
+        await MediaLibrary.deleteAssetsAsync([entry.assetId]);
+    } catch {
+    }
+
+    const updated = registry.filter(e => e.trackId !== trackId);
+    await saveDownloadRegistry(updated);
 }

@@ -1,16 +1,15 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
 import {
     View, Text, FlatList, TouchableOpacity, TextInput,
-    StyleSheet, RefreshControl, Alert, ActivityIndicator
+    StyleSheet, RefreshControl, Alert, ActivityIndicator, Image,
 } from 'react-native';
 import { Track, TracksApi } from '../api/client';
 import { usePlayer } from '../context/PlayerContext';
 import { MiniPlayer } from '../components/MiniPlayer';
-import { DownloadButton } from '../components/DownloadButton';
+import { EditTrackModal } from '../components/EditTrackModal';
 import { cacheTrackList, getCachedTrackList } from '../services/LocalStorageService';
 
-
-type SortBy = 'title' | 'artist' | 'date';
+type SortBy = 'title' | 'artist' | 'date' | 'size';
 
 interface Props {
     onOpenPlayer: () => void;
@@ -23,34 +22,38 @@ export function LibraryScreen({ onOpenPlayer, onOpenAdd }: Props) {
     const [sortBy, setSortBy] = useState<SortBy>('date');
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [editingTrack, setEditingTrack] = useState<Track | null>(null);
     const { play, currentTrack } = usePlayer();
 
     const fetchTracks = useCallback(async (isRefresh = false) => {
         if (isRefresh) setRefreshing(true);
 
-        // Показать кеш сразу — не ждать сервер
         if (!isRefresh) {
-            const cached = await getCachedTrackList();
-            if (cached.length > 0) {
-                setTracks(cached);
-                
-                setLoading(false);
+            try {
+                const cached = await getCachedTrackList();
+                if (cached.length > 0) {
+                    setTracks(cached);
+                    setLoading(false);
+                }
+            } catch {
             }
         }
 
         try {
             const res = await TracksApi.getAll(search || undefined, sortBy);
             setTracks(res.data);
-            await cacheTrackList(res.data);
-        } catch (e) {
-            // Кеш уже показан — просто молча игнорируем
-            // Показать ошибку только если кеша не было
-            const cached = await getCachedTrackList();
-            if (cached.length === 0) {
-                Alert.alert('Нет подключения', 'Не удалось загрузить треки и кеш пуст.');
+            await cacheTrackList(res.data).catch(() => {});
+        } catch {
+            try {
+                const cached = await getCachedTrackList();
+                if (cached.length === 0) {
+                    Alert.alert('Нет подключения', 'Не удалось загрузить треки и кеш пуст.');
+                }
+            } catch {
+                Alert.alert('Нет подключения', 'Не удалось загрузить треки.');
             }
         } finally {
-            setLoading(false);
+            setLoading(false);   
             setRefreshing(false);
         }
     }, [search, sortBy]);
@@ -58,44 +61,110 @@ export function LibraryScreen({ onOpenPlayer, onOpenAdd }: Props) {
     useEffect(() => { fetchTracks(); }, [fetchTracks]);
 
     const handleDelete = (track: Track) => {
-        Alert.alert('Удалить трек с сервера?', track.title, [
-            { text: 'Отмена', style: 'cancel' },
-            {
-                text: 'Удалить', style: 'destructive',
-                onPress: async () => {
-                    await TracksApi.delete(track.id);
-                    setTracks(t => t.filter(x => x.id !== track.id));
-                }
-            }
-        ]);
+        Alert.alert(
+            'Удалить трек?',
+            `"${track.title}" будет удалён с сервера.`,
+            [
+                { text: 'Отмена', style: 'cancel' },
+                {
+                    text: 'Удалить', style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await TracksApi.delete(track.id);
+                            setTracks(ts => ts.filter(t => t.id !== track.id));
+                        } catch {
+                            Alert.alert('Ошибка', 'Не удалось удалить трек');
+                        }
+                    },
+                },
+            ],
+        );
     };
 
-    const formatDuration = (s: number) => {
+    const handleSaved = (updated: Track) => {
+        setTracks(ts => ts.map(t => t.id === updated.id ? updated : t));
+    };
+
+    const fmtDuration = (s: number) => {
         const m = Math.floor(s / 60);
         const sec = Math.floor(s % 60);
         return `${m}:${sec.toString().padStart(2, '0')}`;
     };
 
+    const fmtSize = (b: number) => {
+        if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
+        return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+    };
+
+    const SORT_OPTIONS: { key: SortBy; label: string }[] = [
+        { key: 'date', label: 'По дате' },
+        { key: 'title', label: 'По названию' },
+        { key: 'artist', label: 'По артисту' },
+        { key: 'size', label: 'По размеру' },
+    ];
+
     const renderTrack = ({ item }: { item: Track }) => {
         const isActive = currentTrack?.id === item.id;
+
         return (
             <TouchableOpacity
-                style={[styles.trackItem, isActive && styles.trackItemActive]}
+                style={[styles.card, isActive && styles.cardActive]}
                 onPress={() => play(item)}
-                onLongPress={() => handleDelete(item)}
-                activeOpacity={0.7}
+                activeOpacity={0.75}
             >
-                <View style={styles.trackInfo}>
-                    <Text style={[styles.trackTitle, isActive && styles.trackTitleActive]} numberOfLines={1}>
-                        {isActive ? '♪ ' : ''}{item.title}
+                {/* Обложка */}
+                <View style={styles.thumb}>
+                    {item.thumbnailUrl ? (
+                        <Image
+                            source={{ uri: item.thumbnailUrl }}
+                            style={styles.thumbImg}
+                        />
+                    ) : (
+                        <View style={styles.thumbPlaceholder}>
+                            <Text style={styles.thumbEmoji}>♪</Text>
+                        </View>
+                    )}
+                    {isActive && (
+                        <View style={styles.thumbOverlay}>
+                            <Text style={styles.thumbOverlayIcon}>▶</Text>
+                        </View>
+                    )}
+                </View>
+
+                {/* Инфо */}
+                <View style={styles.info}>
+                    <Text
+                        style={[styles.title, isActive && styles.titleActive]}
+                        numberOfLines={1}
+                    >
+                        {item.title}
                     </Text>
-                    <Text style={styles.trackMeta}>
-                        {item.artist ?? 'Unknown'} · {formatDuration(item.durationSeconds)}
+                    <Text style={styles.artist} numberOfLines={1}>
+                        {item.artist ?? 'Unknown Artist'}
+                        {item.album ? <Text style={styles.album}> · {item.album}</Text> : null}
                     </Text>
-                    {/* Кнопка скачать/удалить локальную копию */}
-                    <View style={styles.trackActions}>
-                        <DownloadButton track={item} />
-                    </View>
+                    <Text style={styles.meta}>
+                        {fmtDuration(item.durationSeconds)} · {fmtSize(item.fileSizeBytes)}
+                        {' · '}{item.fileExtension.toUpperCase()}
+                    </Text>
+                </View>
+
+                {/* Кнопки */}
+                <View style={styles.actions}>
+                    <TouchableOpacity
+                        style={styles.actionBtn}
+                        onPress={() => setEditingTrack(item)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 6 }}
+                    >
+                        <Text style={styles.editIcon}>✎</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.actionBtn}
+                        onPress={() => handleDelete(item)}
+                        hitSlop={{ top: 10, bottom: 10, left: 6, right: 10 }}
+                    >
+                        <Text style={styles.deleteIcon}>✕</Text>
+                    </TouchableOpacity>
                 </View>
             </TouchableOpacity>
         );
@@ -111,78 +180,200 @@ export function LibraryScreen({ onOpenPlayer, onOpenAdd }: Props) {
 
     return (
         <View style={styles.container}>
+            {/* Заголовок */}
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>Библиотека</Text>
-                <TouchableOpacity style={styles.addButton} onPress={onOpenAdd}>
-                    <Text style={styles.addButtonText}>+ Добавить</Text>
+                <View>
+                    <Text style={styles.headerTitle}>Библиотека</Text>
+                    <Text style={styles.headerSub}>
+                        {tracks.length} {pluralTracks(tracks.length)}
+                    </Text>
+                </View>
+                <TouchableOpacity style={styles.addBtn} onPress={onOpenAdd}>
+                    <Text style={styles.addBtnText}>+ Добавить</Text>
                 </TouchableOpacity>
             </View>
 
+            {/* Поиск */}
             <TextInput
                 style={styles.search}
                 placeholder="Поиск треков..."
-                placeholderTextColor="#666"
+                placeholderTextColor="#3a3a5a"
                 value={search}
                 onChangeText={setSearch}
                 returnKeyType="search"
                 onSubmitEditing={() => fetchTracks()}
+                clearButtonMode="while-editing"
             />
 
-            <View style={styles.sortRow}>
-                {(['date', 'title', 'artist'] as SortBy[]).map(s => (
+            {/* Сортировка */}
+            <FlatList
+                horizontal
+                data={SORT_OPTIONS}
+                keyExtractor={o => o.key}
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.sortRow}
+                renderItem={({ item: o }) => (
                     <TouchableOpacity
-                        key={s}
-                        style={[styles.sortBtn, sortBy === s && styles.sortBtnActive]}
-                        onPress={() => setSortBy(s)}
+                        style={[styles.sortBtn, sortBy === o.key && styles.sortBtnActive]}
+                        onPress={() => setSortBy(o.key)}
                     >
-                        <Text style={[styles.sortBtnText, sortBy === s && styles.sortBtnTextActive]}>
-                            {s === 'date' ? 'По дате' : s === 'title' ? 'По названию' : 'По артисту'}
+                        <Text style={[styles.sortBtnText, sortBy === o.key && styles.sortBtnTextActive]}>
+                            {o.label}
                         </Text>
                     </TouchableOpacity>
-                ))}
-            </View>
+                )}
+            />
 
+            {/* Список */}
             <FlatList
                 data={tracks}
                 keyExtractor={t => t.id}
                 renderItem={renderTrack}
+                contentContainerStyle={styles.list}
                 refreshControl={
-                    <RefreshControl refreshing={refreshing} onRefresh={() => fetchTracks(true)} tintColor="#6c63ff" />
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={() => fetchTracks(true)}
+                        tintColor="#6c63ff"
+                    />
                 }
                 ListEmptyComponent={
                     <View style={styles.empty}>
-                        <Text style={styles.emptyText}>Треков пока нет</Text>
-                        <Text style={styles.emptySubtext}>Нажми «+ Добавить» чтобы скачать первый трек</Text>
+                        <Text style={styles.emptyEmoji}>🎵</Text>
+                        <Text style={styles.emptyTitle}>Треков пока нет</Text>
+                        <Text style={styles.emptySubtitle}>
+                            Нажми «+ Добавить» чтобы скачать первый трек
+                        </Text>
                     </View>
                 }
             />
 
             <MiniPlayer onPress={onOpenPlayer} />
+
+            <EditTrackModal
+                track={editingTrack}
+                onClose={() => setEditingTrack(null)}
+                onSaved={handleSaved}
+            />
         </View>
     );
+}
+
+function pluralTracks(n: number) {
+    if (n % 10 === 1 && n % 100 !== 11) return 'трек';
+    if ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)) return 'трека';
+    return 'треков';
 }
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#0f0f1a' },
     centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0f0f1a' },
-    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, paddingTop: 48 },
-    headerTitle: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
-    addButton: { backgroundColor: '#6c63ff', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
-    addButtonText: { color: '#fff', fontWeight: '600' },
-    search: { margin: 16, marginTop: 0, backgroundColor: '#1a1a2e', color: '#fff', borderRadius: 10, padding: 12, fontSize: 15 },
-    sortRow: { flexDirection: 'row', paddingHorizontal: 16, gap: 8, marginBottom: 8 },
-    sortBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: '#1a1a2e' },
-    sortBtnActive: { backgroundColor: '#6c63ff' },
-    sortBtnText: { color: '#aaa', fontSize: 12 },
+
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 16,
+        paddingTop: 52,
+        paddingBottom: 16,
+    },
+    headerTitle: { color: '#fff', fontSize: 26, fontWeight: 'bold', letterSpacing: -0.5 },
+    headerSub: { color: '#444', fontSize: 12, marginTop: 3 },
+    addBtn: {
+        backgroundColor: '#6c63ff',
+        paddingHorizontal: 16,
+        paddingVertical: 9,
+        borderRadius: 20,
+    },
+    addBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+
+    search: {
+        marginHorizontal: 16,
+        marginBottom: 12,
+        backgroundColor: '#1a1a2e',
+        color: '#fff',
+        borderRadius: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 11,
+        fontSize: 15,
+        borderWidth: 1,
+        borderColor: '#1e1e35',
+    },
+
+    sortRow: { paddingHorizontal: 16, gap: 8, marginBottom: 14 },
+    sortBtn: {
+        paddingHorizontal: 14,
+        paddingVertical: 7,
+        borderRadius: 16,
+        backgroundColor: '#1a1a2e',
+        borderWidth: 1,
+        borderColor: '#1e1e35',
+    },
+    sortBtnActive: { backgroundColor: '#6c63ff', borderColor: '#6c63ff' },
+    sortBtnText: { color: '#555', fontSize: 12, fontWeight: '500' },
     sortBtnTextActive: { color: '#fff' },
-    trackItem: { padding: 16, borderBottomWidth: 1, borderBottomColor: '#1a1a2e' },
-    trackItemActive: { backgroundColor: '#1a1a2e' },
-    trackInfo: { flex: 1 },
-    trackTitle: { color: '#fff', fontSize: 15, fontWeight: '500' },
-    trackTitleActive: { color: '#6c63ff' },
-    trackMeta: { color: '#666', fontSize: 12, marginTop: 3 },
-    trackActions: { marginTop: 8 },
-    empty: { alignItems: 'center', marginTop: 80 },
-    emptyText: { color: '#fff', fontSize: 18, fontWeight: '600' },
-    emptySubtext: { color: '#666', fontSize: 14, marginTop: 8, textAlign: 'center' },
+
+    list: { paddingHorizontal: 16, paddingBottom: 12, gap: 8 },
+
+    card: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#13131f',
+        borderRadius: 14,
+        padding: 10,
+        borderWidth: 1,
+        borderColor: '#1e1e35',
+    },
+    cardActive: {
+        borderColor: '#6c63ff55',
+        backgroundColor: '#16152b',
+    },
+
+    thumb: {
+        width: 50,
+        height: 50,
+        borderRadius: 8,
+        overflow: 'hidden',
+        marginRight: 12,
+        flexShrink: 0,
+    },
+    thumbImg: { width: '100%', height: '100%' },
+    thumbPlaceholder: {
+        width: '100%',
+        height: '100%',
+        backgroundColor: '#1e1e35',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    thumbEmoji: { fontSize: 22 },
+    thumbOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(108, 99, 255, 0.75)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    thumbOverlayIcon: { color: '#fff', fontSize: 16 },
+
+    info: { flex: 1, marginRight: 6 },
+    title: { color: '#e8e8f0', fontSize: 14, fontWeight: '600' },
+    titleActive: { color: '#a09aff' },
+    artist: { color: '#555', fontSize: 12, marginTop: 2 },
+    album: { color: '#444' },
+    meta: { color: '#383848', fontSize: 11, marginTop: 4 },
+
+    actions: { gap: 10, alignItems: 'center' },
+    actionBtn: { padding: 2 },
+    editIcon: { color: '#6c63ff', fontSize: 17 },
+    deleteIcon: { color: '#3a3a5a', fontSize: 13 },
+
+    empty: { alignItems: 'center', marginTop: 80, paddingHorizontal: 32 },
+    emptyEmoji: { fontSize: 48, marginBottom: 16 },
+    emptyTitle: { color: '#fff', fontSize: 18, fontWeight: '600' },
+    emptySubtitle: {
+        color: '#444',
+        fontSize: 14,
+        marginTop: 8,
+        textAlign: 'center',
+        lineHeight: 20,
+    },
 });

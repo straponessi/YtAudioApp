@@ -16,7 +16,6 @@ export function AddTrackScreen({ onClose, onDownloadComplete }: Props) {
     const [task, setTask] = useState<DownloadTask | null>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    // Поллинг статуса задачи каждые 2 секунды
     useEffect(() => {
         if (!task || task.status === 'Completed' || task.status === 'Failed') {
             if (pollRef.current) clearInterval(pollRef.current);
