@@ -1,7 +1,12 @@
 ﻿import React, { createContext, useContext, useState, useRef, useCallback } from 'react';
 import { Audio } from 'expo-av';
-import { Track, TracksApi, API_KEY } from '../api/client';
+import { Track, TracksApi } from '../api/client';
 import { getLocalPath } from '../services/LocalStorageService';
+import { Config } from '../config';
+
+export const API_KEY = Config.API_KEY;
+
+
 
 interface PlayerState {
     currentTrack: Track | null;
@@ -23,7 +28,7 @@ const PlayerContext = createContext<PlayerContextValue | null>(null);
 
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const soundRef = useRef<Audio.Sound | null>(null);
-    const playIdRef = useRef(0); // инкрементируется при каждом вызове play()
+    const playIdRef = useRef(0); 
 
     const [state, setState] = useState<PlayerState>({
         currentTrack: null,
@@ -55,7 +60,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         const localPath = await getLocalPath(track.id);
 
-        // Пока мы ждали — мог прийти новый вызов play(). Выходим.
         if (myId !== playIdRef.current) return;
 
         const isLocal = !!localPath;
