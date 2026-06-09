@@ -29,24 +29,31 @@ export function LibraryScreen({ onOpenPlayer, onOpenAdd }: Props) {
         if (isRefresh) setRefreshing(true);
 
         if (!isRefresh) {
-            const cached = await getCachedTrackList();
-            if (cached.length > 0) {
-                setTracks(cached);
-                setLoading(false);
+            try {
+                const cached = await getCachedTrackList();
+                if (cached.length > 0) {
+                    setTracks(cached);
+                    setLoading(false);
+                }
+            } catch {
             }
         }
 
         try {
             const res = await TracksApi.getAll(search || undefined, sortBy);
             setTracks(res.data);
-            await cacheTrackList(res.data);
+            await cacheTrackList(res.data).catch(() => {});
         } catch {
-            const cached = await getCachedTrackList();
-            if (cached.length === 0) {
-                Alert.alert('Нет подключения', 'Не удалось загрузить треки и кеш пуст.');
+            try {
+                const cached = await getCachedTrackList();
+                if (cached.length === 0) {
+                    Alert.alert('Нет подключения', 'Не удалось загрузить треки и кеш пуст.');
+                }
+            } catch {
+                Alert.alert('Нет подключения', 'Не удалось загрузить треки.');
             }
         } finally {
-            setLoading(false);
+            setLoading(false);   
             setRefreshing(false);
         }
     }, [search, sortBy]);
